@@ -1,0 +1,22 @@
+[tools]
+rust = "stable"
+
+[tasks.build]
+run = "cargo build"
+description = "Debug build"
+
+[tasks.run]
+run = "cargo run"
+description = "Run scratchpad (foreground)"
+
+[tasks.test]
+run = "cargo test"
+description = "Run tests"
+
+[tasks.lint]
+run = ["cargo fmt --check", "cargo clippy -- -D warnings"]
+description = "Format check + clippy"
+
+[tasks.install]
+run = "cargo install --path . --root ~/.local"
+description = "Install binary to ~/.local/bin (must be on niri's PATH)"
