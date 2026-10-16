@@ -77,6 +77,15 @@ pub fn show_at(w: &gtk4::Window, cwd: &Path) {
             LOADING.with(|l| l.set(false));
         }
     });
+    // Always reopen on the editor — a stale preview of a previous pad
+    // would otherwise greet the user after a pad switch.
+    if let Some(stack) = w
+        .downcast_ref::<adw::ApplicationWindow>()
+        .and_then(|w| w.content())
+        .and_downcast::<gtk4::Stack>()
+    {
+        stack.set_visible_child_name("edit");
+    }
     w.present();
 }
 
@@ -149,6 +158,7 @@ pub fn build_window(app: &adw::Application) {
             }
             if stack.visible_child_name().as_deref() == Some("preview") {
                 stack.set_visible_child_name("edit");
+                view.grab_focus();
             } else {
                 let buf = view.buffer();
                 let md = buf.text(&buf.start_iter(), &buf.end_iter(), false);
