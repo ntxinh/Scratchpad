@@ -14,12 +14,140 @@ use crate::store::Store;
 thread_local! {
     static WINDOW: RefCell<Option<adw::ApplicationWindow>> = const { RefCell::new(None) };
     static BUFFER: RefCell<Option<gtk4::TextBuffer>> = const { RefCell::new(None) };
+    static STACK: RefCell<Option<gtk4::Stack>> = const { RefCell::new(None) };
+    static PAD_BTN: RefCell<Option<gtk4::Button>> = const { RefCell::new(None) };
     static STORE: Store = Store::new();
     static PAD: RefCell<String> = RefCell::new("default".into());
     static SAVE_SRC: RefCell<Option<glib::SourceId>> = const { RefCell::new(None) };
     // Suppresses the autosave debounce while we load a pad into the buffer —
     // writing back identical text would needlessly bump `modified`.
     static LOADING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Swap `id`'s text into the buffer under the LOADING guard and
+/// reflect it in the headerbar's pad button.
+fn load_pad(id: &str) {
+    PAD.with(|p| *p.borrow_mut() = id.to_string());
+    BUFFER.with(|b| {
+        if let Some(buf) = b.borrow().as_ref() {
+            let text = STORE.with(|s| s.load(id));
+            LOADING.with(|l| l.set(true));
+            buf.set_text(&text);
+            LOADING.with(|l| l.set(false));
+        }
+    });
+    PAD_BTN.with(|b| {
+        if let Some(btn) = b.borrow().as_ref() {
+            btn.set_label(id);
+        }
+    });
+}
+
+/// Refill the switcher list: pads whose id/name contains `term`, then
+/// per-line hits from `Store::search`. Every row carries its pad id.
+fn refresh_pad_list(list: &gtk4::ListBox, term: &str) {
+    while let Some(row) = list.row_at_index(0) {
+        list.remove(&row);
+    }
+    let term_l = term.to_lowercase();
+    for meta in STORE.with(|s| s.list()) {
+        if !term_l.is_empty()
+            && !meta.id.to_lowercase().contains(&term_l)
+            && !meta.name.to_lowercase().contains(&term_l)
+        {
+            continue;
+        }
+        let label = if meta.name == meta.id {
+            meta.id.clone()
+        } else {
+            format!("{} — {}", meta.id, meta.name)
+        };
+        let row = gtk4::ListBoxRow::new();
+        row.set_child(Some(
+            &gtk4::Label::builder().label(label).xalign(0.0).build(),
+        ));
+        unsafe { row.set_data("pad-id", meta.id) };
+        list.append(&row);
+    }
+    if !term.is_empty() {
+        for (id, line, text) in STORE.with(|s| s.search(term)) {
+            let row = gtk4::ListBoxRow::new();
+            row.set_child(Some(
+                &gtk4::Label::builder()
+                    .label(format!("{id}:{line}  {}", text.trim()))
+                    .xalign(0.0)
+                    .ellipsize(gtk4::pango::EllipsizeMode::End)
+                    .build(),
+            ));
+            row.add_css_class("dim-label");
+            unsafe { row.set_data("pad-id", id) };
+            list.append(&row);
+        }
+    }
+}
+
+/// Popover holding the search entry + pad/hit list, parented to `pad_btn`.
+fn build_pad_popover(pad_btn: &gtk4::Button) -> gtk4::Popover {
+    let search = gtk4::SearchEntry::new();
+    let list = gtk4::ListBox::new();
+    list.add_css_class("navigation-sidebar");
+    let scroll = gtk4::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk4::PolicyType::Never)
+        .propagate_natural_height(true)
+        .max_content_height(320)
+        .child(&list)
+        .build();
+    let vbox = gtk4::Box::builder()
+        .orientation(gtk4::Orientation::Vertical)
+        .spacing(6)
+        .margin_top(6)
+        .margin_bottom(6)
+        .margin_start(6)
+        .margin_end(6)
+        .build();
+    vbox.append(&search);
+    vbox.append(&scroll);
+
+    let pop = gtk4::Popover::builder()
+        .position(gtk4::PositionType::Bottom)
+        .child(&vbox)
+        .build();
+    pop.set_parent(pad_btn);
+
+    // Fresh rebuild on every open — other invocations may have added pads.
+    pop.connect_map({
+        let list = list.clone();
+        let search = search.clone();
+        move |_| {
+            search.set_text("");
+            refresh_pad_list(&list, "");
+            search.grab_focus();
+        }
+    });
+    search.connect_search_changed({
+        let list = list.clone();
+        move |s| refresh_pad_list(&list, &s.text())
+    });
+
+    list.connect_row_activated({
+        let pop = pop.clone();
+        move |_, row| {
+            // Rows always carry a pad-id; missing data would be a bug, skip.
+            let Some(id) = (unsafe { row.data::<String>("pad-id") }) else {
+                return;
+            };
+            let id: String = unsafe { id.as_ref() }.clone();
+            if PAD.with(|p| *p.borrow() == id) {
+                pop.popdown();
+                return;
+            }
+            flush_save();
+            load_pad(&id);
+            pop.popdown();
+        }
+    });
+
+    pop
 }
 
 fn save_now(buf: &gtk4::TextBuffer) {
@@ -56,7 +184,6 @@ pub fn show_for_cwd(w: &gtk4::Window) {
 
 pub fn show_at(w: &gtk4::Window, cwd: &Path) {
     let pad = detect::pad_id(cwd);
-    PAD.with(|p| *p.borrow_mut() = pad.clone());
     if let Some(root) = detect::repo_root(cwd) {
         let unset = STORE.with(|s| {
             s.list()
@@ -69,23 +196,14 @@ pub fn show_at(w: &gtk4::Window, cwd: &Path) {
             STORE.with(|s| s.set_repo(&pad, &root));
         }
     }
-    BUFFER.with(|b| {
-        if let Some(buf) = b.borrow().as_ref() {
-            let text = STORE.with(|s| s.load(&pad));
-            LOADING.with(|l| l.set(true));
-            buf.set_text(&text);
-            LOADING.with(|l| l.set(false));
-        }
-    });
+    load_pad(&pad);
     // Always reopen on the editor — a stale preview of a previous pad
     // would otherwise greet the user after a pad switch.
-    if let Some(stack) = w
-        .downcast_ref::<adw::ApplicationWindow>()
-        .and_then(|w| w.content())
-        .and_downcast::<gtk4::Stack>()
-    {
-        stack.set_visible_child_name("edit");
-    }
+    STACK.with(|s| {
+        if let Some(stack) = s.borrow().as_ref() {
+            stack.set_visible_child_name("edit");
+        }
+    });
     w.present();
 }
 
@@ -127,7 +245,55 @@ pub fn build_window(app: &adw::Application) {
             &gtk4::ScrolledWindow::builder().child(&preview_view).build(),
             Some("preview"),
         );
-        window.set_content(Some(&stack));
+
+        // Headerbar: pad switcher on the left, quick actions on the right.
+        let header = adw::HeaderBar::new();
+        let pad_btn = gtk4::Button::builder().label("default").build();
+        let pop = build_pad_popover(&pad_btn);
+        pad_btn.connect_clicked(move |_| pop.popup());
+        header.pack_start(&pad_btn);
+
+        let fence_btn = gtk4::Button::builder()
+            .label("```")
+            .tooltip_text("Insert fenced code block")
+            .build();
+        fence_btn.connect_clicked({
+            let view = view.clone();
+            move |_| view.buffer().insert_at_cursor("\n```\n\n```\n")
+        });
+        let todo_btn = gtk4::Button::builder()
+            .label("- [ ]")
+            .tooltip_text("Insert todo checkbox")
+            .build();
+        todo_btn.connect_clicked({
+            let view = view.clone();
+            move |_| {
+                let buf = view.buffer();
+                let mut iter = buf.iter_at_mark(&buf.get_insert());
+                iter.set_line_offset(0);
+                buf.insert(&mut iter, "- [ ] ");
+            }
+        });
+        let copy_btn = gtk4::Button::builder()
+            .label("Copy")
+            .tooltip_text("Copy entire pad")
+            .build();
+        copy_btn.connect_clicked(|b| {
+            BUFFER.with(|c| {
+                if let Some(buf) = c.borrow().as_ref() {
+                    let text = buf.text(&buf.start_iter(), &buf.end_iter(), false);
+                    b.clipboard().set_text(&text);
+                }
+            });
+        });
+        header.pack_end(&copy_btn);
+        header.pack_end(&todo_btn);
+        header.pack_end(&fence_btn);
+
+        let toolbar = adw::ToolbarView::new();
+        toolbar.add_top_bar(&header);
+        toolbar.set_content(Some(&stack));
+        window.set_content(Some(&toolbar));
 
         let buffer = view.buffer();
         buffer.connect_changed(|buf| {
@@ -151,21 +317,24 @@ pub fn build_window(app: &adw::Application) {
 
         // Ctrl+P toggles between editor and rendered markdown preview.
         let keys = gtk4::EventControllerKey::new();
-        keys.connect_key_pressed(move |_, key, _, state| {
-            let is_p = key == gtk4::gdk::Key::p || key == gtk4::gdk::Key::P;
-            if !is_p || !state.contains(gtk4::gdk::ModifierType::CONTROL_MASK) {
-                return glib::Propagation::Proceed;
+        keys.connect_key_pressed({
+            let stack = stack.clone();
+            move |_, key, _, state| {
+                let is_p = key == gtk4::gdk::Key::p || key == gtk4::gdk::Key::P;
+                if !is_p || !state.contains(gtk4::gdk::ModifierType::CONTROL_MASK) {
+                    return glib::Propagation::Proceed;
+                }
+                if stack.visible_child_name().as_deref() == Some("preview") {
+                    stack.set_visible_child_name("edit");
+                    view.grab_focus();
+                } else {
+                    let buf = view.buffer();
+                    let md = buf.text(&buf.start_iter(), &buf.end_iter(), false);
+                    preview::render_markdown(&md, &preview_view.buffer());
+                    stack.set_visible_child_name("preview");
+                }
+                glib::Propagation::Stop
             }
-            if stack.visible_child_name().as_deref() == Some("preview") {
-                stack.set_visible_child_name("edit");
-                view.grab_focus();
-            } else {
-                let buf = view.buffer();
-                let md = buf.text(&buf.start_iter(), &buf.end_iter(), false);
-                preview::render_markdown(&md, &preview_view.buffer());
-                stack.set_visible_child_name("preview");
-            }
-            glib::Propagation::Stop
         });
         window.add_controller(keys);
 
@@ -178,6 +347,8 @@ pub fn build_window(app: &adw::Application) {
         let window: adw::ApplicationWindow = window;
         *cell.borrow_mut() = Some(window.clone());
         BUFFER.with(|b| *b.borrow_mut() = Some(buffer));
+        STACK.with(|s| *s.borrow_mut() = Some(stack.clone()));
+        PAD_BTN.with(|b| *b.borrow_mut() = Some(pad_btn));
         show_for_cwd(window.upcast_ref());
     });
 }
