@@ -40,6 +40,7 @@ The compositor owns the keybind; the app can't grab keys under Wayland.
 | `scratchpad` | Open the overlay (foreground) |
 | `scratchpad toggle` | Show/hide via D-Bus activation of the running instance |
 | `scratchpad list` | List scratchpads |
+| `scratchpad search <term>` | Search across scratchpads (`id:line: text`) |
 | `scratchpad export <id> <path>` | Promote a scratchpad to a `.md` file on disk |
 
 Scratchpad association is automatic: if `$PWD` is inside a git repo, notes land
