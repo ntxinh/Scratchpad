@@ -1,6 +1,3 @@
-// Consumed by task 5; nothing calls it yet.
-#![allow(dead_code)]
-
 use std::path::{Path, PathBuf};
 
 pub fn pad_id(cwd: &Path) -> String {

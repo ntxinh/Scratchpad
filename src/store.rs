@@ -1,6 +1,3 @@
-// load/save/set_repo consumed by tasks 5-7; `at` is test-only.
-#![allow(dead_code)]
-
 use gtk4::glib;
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
