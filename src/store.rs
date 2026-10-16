@@ -1,4 +1,4 @@
-// Consumed by tasks 4-7; nothing calls it yet.
+// load/save/set_repo consumed by tasks 5-7; `at` is test-only.
 #![allow(dead_code)]
 
 use gtk4::glib;
