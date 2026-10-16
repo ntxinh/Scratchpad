@@ -21,6 +21,10 @@ pub fn build_window(app: &adw::Application) {
             .default_height(380)
             .build();
 
+        window.connect_destroy(|_| {
+            WINDOW.with(|cell| *cell.borrow_mut() = None);
+        });
+
         window.init_layer_shell();
         window.set_layer(Layer::Overlay);
         window.set_anchor(Edge::Top, true);

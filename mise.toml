@@ -3,7 +3,7 @@ rust = "stable"
 
 [env]
 # gtk4-layer-shell-devel staged under ~/.local (no sudo on this box)
-PKG_CONFIG_PATH = "{{ env.PKG_CONFIG_PATH }}:$HOME/.local/lib64/pkgconfig"
+PKG_CONFIG_PATH = '{{ env.PKG_CONFIG_PATH | default(value="") }}:{{ env.HOME }}/.local/lib64/pkgconfig'
 
 [tasks.build]
 run = "cargo build"
