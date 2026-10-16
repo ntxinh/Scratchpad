@@ -74,8 +74,13 @@ pub fn render_markdown(md: &str, buf: &gtk4::TextBuffer) {
                     ensure_trailing_newline(buf);
                 }
             }
-            Event::Text(t) | Event::Code(t) | Event::InlineMath(t) | Event::DisplayMath(t) => {
+            Event::Text(t) | Event::InlineMath(t) | Event::DisplayMath(t) => {
                 let names: Vec<&str> = active.iter().map(String::as_str).collect();
+                buf.insert_with_tags_by_name(&mut buf.end_iter(), &t, &names);
+            }
+            Event::Code(t) => {
+                let mut names: Vec<&str> = active.iter().map(String::as_str).collect();
+                names.push("code");
                 buf.insert_with_tags_by_name(&mut buf.end_iter(), &t, &names);
             }
             Event::SoftBreak | Event::HardBreak => {
@@ -100,7 +105,9 @@ mod tests {
 
     #[test]
     fn renders_heading_bold_and_code() {
-        gtk4::init().expect("gtk init needs the wayland session");
+        if gtk4::init().is_err() {
+            return; // headless/CI: no display, nothing to assert
+        }
         let buf = gtk4::TextBuffer::new(None::<&gtk4::TextTagTable>);
         render_markdown(
             "# Hi\n\nsome **bold** text\n\n```\nfn main() {}\n```\n",

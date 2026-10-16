@@ -159,7 +159,13 @@ fn build_pad_popover(pad_btn: &gtk4::Button) -> gtk4::Popover {
 
 fn save_now(buf: &gtk4::TextBuffer) {
     let text = buf.text(&buf.start_iter(), &buf.end_iter(), false);
-    STORE.with(|s| PAD.with(|p| s.save(&p.borrow(), &text).ok()));
+    STORE.with(|s| {
+        PAD.with(|p| {
+            if let Err(e) = s.save(&p.borrow(), &text) {
+                eprintln!("scratchpad: save failed: {e}");
+            }
+        })
+    });
 }
 
 fn cancel_pending_save() {
@@ -274,6 +280,36 @@ pub fn build_window(app: &adw::Application) {
                 buf.insert(&mut iter, "- [ ] ");
             }
         });
+        let url_btn = gtk4::Button::builder()
+            .label("[]()")
+            .tooltip_text("Insert markdown link")
+            .build();
+        url_btn.connect_clicked({
+            let view = view.clone();
+            move |_| {
+                let buf = view.buffer();
+                buf.insert_at_cursor("[]()");
+                // Land between the brackets so the title is typed first.
+                let mut iter = buf.iter_at_mark(&buf.get_insert());
+                iter.backward_chars(3);
+                buf.place_cursor(&iter);
+            }
+        });
+        let cmd_btn = gtk4::Button::builder()
+            .label("`cmd`")
+            .tooltip_text("Insert inline command")
+            .build();
+        cmd_btn.connect_clicked({
+            let view = view.clone();
+            move |_| {
+                let buf = view.buffer();
+                buf.insert_at_cursor("`cmd`");
+                // Select "cmd" so typing replaces it.
+                let mut start = buf.iter_at_mark(&buf.get_insert());
+                start.backward_chars(4);
+                buf.select_range(&start, &buf.iter_at_mark(&buf.get_insert()));
+            }
+        });
         let copy_btn = gtk4::Button::builder()
             .label("Copy")
             .tooltip_text("Copy entire pad")
@@ -289,6 +325,8 @@ pub fn build_window(app: &adw::Application) {
         header.pack_end(&copy_btn);
         header.pack_end(&todo_btn);
         header.pack_end(&fence_btn);
+        header.pack_end(&url_btn);
+        header.pack_end(&cmd_btn);
 
         let toolbar = adw::ToolbarView::new();
         toolbar.add_top_bar(&header);
