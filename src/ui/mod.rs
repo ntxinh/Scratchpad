@@ -1,3 +1,5 @@
+mod preview;
+
 use std::cell::{Cell, RefCell};
 use std::path::Path;
 use std::time::Duration;
@@ -103,8 +105,20 @@ pub fn build_window(app: &adw::Application) {
         window.set_margin(Edge::Top, 80);
 
         let view = gtk4::TextView::builder().monospace(true).build();
-        let scroll = gtk4::ScrolledWindow::builder().child(&view).build();
-        window.set_content(Some(&scroll));
+        let preview_view = gtk4::TextView::builder()
+            .editable(false)
+            .cursor_visible(false)
+            .build();
+        let stack = gtk4::Stack::new();
+        stack.add_named(
+            &gtk4::ScrolledWindow::builder().child(&view).build(),
+            Some("edit"),
+        );
+        stack.add_named(
+            &gtk4::ScrolledWindow::builder().child(&preview_view).build(),
+            Some("preview"),
+        );
+        window.set_content(Some(&stack));
 
         let buffer = view.buffer();
         buffer.connect_changed(|buf| {
@@ -125,6 +139,25 @@ pub fn build_window(app: &adw::Application) {
                 ));
             });
         });
+
+        // Ctrl+P toggles between editor and rendered markdown preview.
+        let keys = gtk4::EventControllerKey::new();
+        keys.connect_key_pressed(move |_, key, _, state| {
+            let is_p = key == gtk4::gdk::Key::p || key == gtk4::gdk::Key::P;
+            if !is_p || !state.contains(gtk4::gdk::ModifierType::CONTROL_MASK) {
+                return glib::Propagation::Proceed;
+            }
+            if stack.visible_child_name().as_deref() == Some("preview") {
+                stack.set_visible_child_name("edit");
+            } else {
+                let buf = view.buffer();
+                let md = buf.text(&buf.start_iter(), &buf.end_iter(), false);
+                preview::render_markdown(&md, &preview_view.buffer());
+                stack.set_visible_child_name("preview");
+            }
+            glib::Propagation::Stop
+        });
+        window.add_controller(keys);
 
         // Stay resident: close just hides + saves, never destroys.
         window.connect_close_request(|w| {
