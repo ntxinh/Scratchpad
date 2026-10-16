@@ -1,4 +1,5 @@
 use std::cell::{Cell, RefCell};
+use std::path::Path;
 use std::time::Duration;
 
 use adw::prelude::*;
@@ -32,21 +33,29 @@ fn cancel_pending_save() {
     });
 }
 
-pub fn hide_and_save(w: &gtk4::Window) {
+pub fn flush_save() {
     cancel_pending_save();
     BUFFER.with(|b| {
         if let Some(buf) = b.borrow().as_ref() {
             save_now(buf);
         }
     });
+}
+
+pub fn hide_and_save(w: &gtk4::Window) {
+    flush_save();
     w.set_visible(false);
 }
 
 pub fn show_for_cwd(w: &gtk4::Window) {
     let cwd = std::env::current_dir().unwrap_or_default();
-    let pad = detect::pad_id(&cwd);
+    show_at(w, &cwd);
+}
+
+pub fn show_at(w: &gtk4::Window, cwd: &Path) {
+    let pad = detect::pad_id(cwd);
     PAD.with(|p| *p.borrow_mut() = pad.clone());
-    if let Some(root) = detect::repo_root(&cwd) {
+    if let Some(root) = detect::repo_root(cwd) {
         let unset = STORE.with(|s| {
             s.list()
                 .iter()
@@ -94,7 +103,8 @@ pub fn build_window(app: &adw::Application) {
         window.set_margin(Edge::Top, 80);
 
         let view = gtk4::TextView::builder().monospace(true).build();
-        window.set_content(Some(&view));
+        let scroll = gtk4::ScrolledWindow::builder().child(&view).build();
+        window.set_content(Some(&scroll));
 
         let buffer = view.buffer();
         buffer.connect_changed(|buf| {
