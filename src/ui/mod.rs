@@ -41,6 +41,13 @@ fn load_pad(id: &str) {
             btn.set_label(id);
         }
     });
+    // Always reopen on the editor — a stale preview of the previous pad
+    // would otherwise greet the user after a pad switch.
+    STACK.with(|s| {
+        if let Some(stack) = s.borrow().as_ref() {
+            stack.set_visible_child_name("edit");
+        }
+    });
 }
 
 /// Refill the switcher list: pads whose id/name contains `term`, then
@@ -197,13 +204,6 @@ pub fn show_at(w: &gtk4::Window, cwd: &Path) {
         }
     }
     load_pad(&pad);
-    // Always reopen on the editor — a stale preview of a previous pad
-    // would otherwise greet the user after a pad switch.
-    STACK.with(|s| {
-        if let Some(stack) = s.borrow().as_ref() {
-            stack.set_visible_child_name("edit");
-        }
-    });
     w.present();
 }
 

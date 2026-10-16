@@ -84,12 +84,14 @@ impl Store {
         out
     }
 
-    /// (id, 1-based line number, line text) for every line containing `term`.
+    /// (id, 1-based line number, line text) for every line containing `term`,
+    /// case-insensitive.
     pub fn search(&self, term: &str) -> Vec<(String, usize, String)> {
+        let needle = term.to_lowercase();
         let mut hits = vec![];
         for m in self.list() {
             for (i, line) in self.load(&m.id).lines().enumerate() {
-                if line.contains(term) {
+                if line.to_lowercase().contains(&needle) {
                     hits.push((m.id.clone(), i + 1, line.to_string()));
                 }
             }
